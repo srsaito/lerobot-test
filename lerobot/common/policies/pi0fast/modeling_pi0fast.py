@@ -836,6 +836,7 @@ class PI0FAST(nn.Module):
                     relaxed_decoding=self.config.relaxed_action_decoding,
                 ),
                 device=tokens.device,
+                dtype=torch.float32
             ).squeeze(0)
             for tok in action_tokens
         ]

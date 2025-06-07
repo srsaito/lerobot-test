@@ -26,7 +26,7 @@ from lerobot.common.optim import OptimizerConfig
 from lerobot.common.optim.schedulers import LRSchedulerConfig
 from lerobot.common.utils.hub import HubMixin
 from lerobot.configs import parser
-from lerobot.configs.default import DatasetConfig, EvalConfig, WandBConfig
+from lerobot.configs.default import DatasetConfig, EvalConfig, WandBConfig, TensorBoardConfig
 from lerobot.configs.policies import PreTrainedConfig
 
 TRAIN_CONFIG_NAME = "train_config.json"
@@ -63,6 +63,7 @@ class TrainPipelineConfig(HubMixin):
     scheduler: LRSchedulerConfig | None = None
     eval: EvalConfig = field(default_factory=EvalConfig)
     wandb: WandBConfig = field(default_factory=WandBConfig)
+    tensorboard: TensorBoardConfig = field(default_factory=TensorBoardConfig)
 
     def __post_init__(self):
         self.checkpoint_path = None
@@ -89,7 +90,7 @@ class TrainPipelineConfig(HubMixin):
                 )
             policy_path = Path(config_path).parent
             self.policy.pretrained_path = policy_path
-            self.checkpoint_path = policy_path.parent
+            self.checkpoint_path = policy_path  # Removed .parent so that it points to specific checkpoint directory
 
         if not self.job_name:
             if self.env is None:
