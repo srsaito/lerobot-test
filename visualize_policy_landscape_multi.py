@@ -57,7 +57,7 @@ from lerobot.common.utils.utils import init_logging
 
 
 class BasePolicyLandscapeVisualizer(ABC):
-    """Base class for policy landscape visualization."""
+    """Base class for policy landscape visualization with comprehensive fallback handling."""
     
     def __init__(
         self,
@@ -70,62 +70,63 @@ class BasePolicyLandscapeVisualizer(ABC):
         batch_size: int = 100,
         trace_length: int = 10,
     ):
-        """
-        Args:
-            policy_path: Path to trained Diffusion Policy
-            dataset_repo_id: HuggingFace dataset repository ID
-            device: Device to run policy on
-            action_resolution: Resolution for action space sampling (NxN grid)
-            scoring_method: Method for scoring actions ('likelihood', 'distance', 'noise_pred')
-            colormap: Matplotlib colormap for heatmap
-            batch_size: Batch size for efficient action evaluation
-            trace_length: Number of past expert actions to show in trace/snake
-        """
         self.policy_path = policy_path
         self.dataset_repo_id = dataset_repo_id
         self.device = device
         self.action_resolution = action_resolution
         self.scoring_method = scoring_method
-        self.effective_scoring_method = scoring_method  # Track what we're actually using
+        self.effective_scoring_method = scoring_method  # May change due to persistent failures
         self.colormap = colormap
         self.batch_size = batch_size
         self.trace_length = trace_length
         
-        # Initialize failure tracking
+        # Fallback tracking and statistics
+        self.fallback_stats = {
+            'kde_failures': 0,
+            'memory_errors': 0,
+            'device_errors': 0,
+            'policy_errors': 0,
+            'numerical_errors': 0,
+            'total_steps': 0,
+            'successful_steps': 0,
+            'frozen_steps': 0  # Steps where we used last good state
+        }
         self.scoring_failures = 0
+        self.last_good_scores = None  # Cache for "freeze last good state" fallback
+        self.consecutive_failures = 0
+        self.max_consecutive_failures = 3  # Switch to distance after this many
         
-        # Action space bounds for PushT
-        self.action_low = np.array([0.0, 0.0])
-        self.action_high = np.array([512.0, 512.0])
-        
-        # Action trace for visualization
-        self.action_trace = []
-        
-        # Load the policy and dataset
-        self._load_policy()
-        self.dataset = LeRobotDataset(dataset_repo_id, download_videos=True)
-        
-        # Create environment
+        # Initialize environment and policy
         self.env = gym.make(
             "gym_pusht/PushT-v0",
             obs_type="pixels_agent_pos",
             render_mode="rgb_array",
             max_episode_steps=300,
         )
-        
-        # Get action space bounds
+        # Get action space bounds from environment
         self.action_low = self.env.action_space.low
         self.action_high = self.env.action_space.high
-        logging.info(f"Action space: low={self.action_low}, high={self.action_high}")
         
-        # Create action grid for sampling
+        # Load dataset
+        self.dataset = LeRobotDataset(dataset_repo_id, download_videos=True)
+        
+        # Create action grid for evaluation
         self.action_grid = self._create_action_grid()
         
+        # Load the policy
+        self._load_policy()
+        
+        # Initialize action trace
+        self.action_trace = []
+        
+        # Log initialization info
+        logging.info(f"Action space: low={self.action_low}, high={self.action_high}")
         logging.info(f"Initialized visualizer with device: {self.device}")
         logging.info(f"Action space: [{self.action_low[0]}, {self.action_high[0]}] x [{self.action_low[1]}, {self.action_high[1]}]")
         logging.info(f"Action grid shape: {self.action_grid.shape}")
         logging.info(f"Scoring method: {self.scoring_method}")
-    
+        logging.info(f"Batch sizes: main={self.batch_size}, sampling=50 (adjustable)")
+        
     @abstractmethod
     def _load_policy(self):
         """Load the policy model."""
@@ -326,19 +327,10 @@ class BasePolicyLandscapeVisualizer(ABC):
             scores = -mse  # Higher score for better predictions
             
         except Exception as e:
-            self.scoring_failures += 1
-            if self.scoring_failures <= 3:  # Only log first few failures
-                logging.warning(f"Error computing likelihood: {e}. Falling back to distance metric.")
-            elif self.scoring_failures == 4:
-                logging.warning(f"Likelihood calculation consistently failing. Switching to distance metric for remaining steps.")
-                self.effective_scoring_method = "distance"
-            
-            # Fallback to distance metric
-            policy_action = self.policy.select_action({k: v[:1] for k, v in observation.items()})
-            # Keep everything on device for optimal GPU performance
-            distances = torch.norm(actions - policy_action, dim=1)
-            scores = -distances
+            return self._handle_fallback(e, "likelihood_computation", actions)
         
+        # Record successful computation
+        self._record_successful_computation(scores)
         return scores
     
     def _compute_noise_prediction_score(
@@ -381,13 +373,10 @@ class BasePolicyLandscapeVisualizer(ABC):
             scores = -denoising_error  # Lower error = higher score
             
         except Exception as e:
-            logging.warning(f"Error computing noise prediction score: {e}. Using distance fallback.")
-            # Fallback to distance metric
-            policy_action = self.policy.select_action({k: v[:1] for k, v in observation.items()})
-            # Keep everything on device for optimal GPU performance
-            distances = torch.norm(actions - policy_action, dim=1)
-            scores = -distances
+            return self._handle_fallback(e, "noise_prediction", actions)
         
+        # Record successful computation
+        self._record_successful_computation(scores)
         return scores
     
     def _create_enhanced_action_heatmap(
@@ -589,6 +578,9 @@ class BasePolicyLandscapeVisualizer(ABC):
         logging.info(f"Generating {policy_name} visualization for episode {episode_idx} with {len(expert_actions)} steps")
         logging.info(f"Scoring method: {self.scoring_method}, Colormap: {self.colormap}")
         
+        # Track current observation for fallback handling
+        self.current_observation = None
+        
         for step in tqdm(range(len(expert_actions))):
             # Get current expert action
             expert_action = expert_actions[step]
@@ -605,6 +597,7 @@ class BasePolicyLandscapeVisualizer(ABC):
             
             # Prepare observation for policy (using dataset image if available)
             policy_obs = self._prepare_observation_for_policy(obs, dataset_image)
+            self.current_observation = policy_obs  # Store for fallback handling
             
             # Create enhanced action landscape heatmap
             heatmap_frame = self._create_enhanced_action_heatmap(
@@ -668,6 +661,9 @@ class BasePolicyLandscapeVisualizer(ABC):
         
         with open(output_dir / f"episode_{episode_idx}_config_{self._get_policy_name().lower().replace(' ', '_')}.json", "w") as f:
             json.dump(config, f, indent=2)
+        
+        # Print fallback statistics
+        self.print_fallback_statistics()
 
     def _ensure_tensor_device_dtype(self, tensor: torch.Tensor, target_device: str = None) -> torch.Tensor:
         """Ensure tensor is on correct device with correct dtype for optimal GPU performance."""
@@ -682,6 +678,136 @@ class BasePolicyLandscapeVisualizer(ABC):
             tensor = tensor.to(device)
             
         return tensor
+
+    def _classify_and_log_error(self, error: Exception, context: str) -> str:
+        """Classify error type and update statistics."""
+        error_str = str(error).lower()
+        error_type = "unknown"
+        
+        if "out of memory" in error_str or "cuda out of memory" in error_str:
+            error_type = "memory_error"
+            self.fallback_stats['memory_errors'] += 1
+            logging.warning(f"GPU Memory Error in {context}: {error}")
+            if self.fallback_stats['memory_errors'] == 1:  # First memory error
+                logging.warning("💡 SUGGESTION: Try reducing batch size with --batch_size=50 or lower")
+                logging.warning("💡 Current sampling batch size is 50, main batch size is {self.batch_size}")
+        elif "device" in error_str or "mps" in error_str or "cuda" in error_str:
+            error_type = "device_error"
+            self.fallback_stats['device_errors'] += 1
+            logging.warning(f"Device Error in {context}: {error}")
+        elif "singular" in error_str or "kde" in error_str or "covariance" in error_str:
+            error_type = "kde_failure"
+            self.fallback_stats['kde_failures'] += 1
+            logging.warning(f"KDE/Statistical Error in {context}: {error}")
+        elif "policy" in error_str or "select_action" in error_str:
+            error_type = "policy_error"
+            self.fallback_stats['policy_errors'] += 1
+            logging.warning(f"Policy Error in {context}: {error}")
+        elif "nan" in error_str or "inf" in error_str or "numerical" in error_str:
+            error_type = "numerical_error"
+            self.fallback_stats['numerical_errors'] += 1
+            logging.warning(f"Numerical Error in {context}: {error}")
+        else:
+            logging.warning(f"Unclassified Error in {context}: {error}")
+            
+        return error_type
+    
+    def _handle_fallback(self, error: Exception, context: str, actions: torch.Tensor) -> torch.Tensor:
+        """Handle fallback with comprehensive error tracking and graceful degradation."""
+        self.fallback_stats['total_steps'] += 1
+        error_type = self._classify_and_log_error(error, context)
+        
+        # Try "freeze last good state" first
+        if self.last_good_scores is not None and self.consecutive_failures < self.max_consecutive_failures:
+            self.consecutive_failures += 1
+            self.fallback_stats['frozen_steps'] += 1
+            logging.info(f"🧊 Using frozen last good state (consecutive failures: {self.consecutive_failures})")
+            
+            # Ensure the cached scores match current action grid size
+            if self.last_good_scores.shape[0] == actions.shape[0]:
+                return self.last_good_scores.clone()
+            else:
+                logging.warning(f"Cached scores shape mismatch: {self.last_good_scores.shape[0]} vs {actions.shape[0]}")
+        
+        # Fallback to distance-based scoring with normalization
+        logging.warning(f"🔄 Falling back to distance-based scoring (failure #{self.consecutive_failures + 1})")
+        
+        try:
+            # Get policy prediction for distance calculation
+            if hasattr(self, 'policy') and self.policy is not None:
+                single_obs = {k: v[:1] for k, v in self._get_current_observation().items()}
+                policy_action = self.policy.select_action(single_obs)
+            else:
+                # Ultimate fallback: center of action space
+                policy_action = torch.tensor([(self.action_low[0] + self.action_high[0]) / 2,
+                                            (self.action_low[1] + self.action_high[1]) / 2], 
+                                           device=self.device)
+            
+            # Compute normalized distance scores
+            distances = torch.norm(actions - policy_action, dim=1)
+            scores = -distances
+            
+            # Normalize to [0, 1] range for consistency
+            if scores.max() != scores.min():
+                scores = (scores - scores.min()) / (scores.max() - scores.min())
+            else:
+                scores = torch.ones_like(scores) * 0.5
+                
+            return scores
+            
+        except Exception as fallback_error:
+            logging.error(f"❌ Even fallback failed: {fallback_error}")
+            # Ultimate fallback: uniform scores
+            return torch.ones(actions.shape[0], device=self.device) * 0.5
+    
+    def _record_successful_computation(self, scores: torch.Tensor):
+        """Record successful computation and cache scores for potential future fallback."""
+        self.fallback_stats['successful_steps'] += 1
+        self.fallback_stats['total_steps'] += 1
+        self.consecutive_failures = 0  # Reset failure counter
+        self.last_good_scores = scores.clone().detach()  # Cache for future fallback
+    
+    def _get_current_observation(self) -> Dict[str, torch.Tensor]:
+        """Get current observation for fallback handling."""
+        if hasattr(self, 'current_observation') and self.current_observation is not None:
+            return self.current_observation
+        else:
+            # Fallback: return empty dict (will trigger ultimate fallback in _handle_fallback)
+            return {}
+    
+    def print_fallback_statistics(self):
+        """Print comprehensive fallback statistics."""
+        stats = self.fallback_stats
+        total = stats['total_steps']
+        
+        if total == 0:
+            logging.info("📊 No fallback events recorded")
+            return
+            
+        logging.info("📊 FALLBACK STATISTICS:")
+        logging.info(f"   Total steps processed: {total}")
+        logging.info(f"   Successful steps: {stats['successful_steps']} ({stats['successful_steps']/total*100:.1f}%)")
+        logging.info(f"   Steps with fallbacks: {total - stats['successful_steps']} ({(total - stats['successful_steps'])/total*100:.1f}%)")
+        
+        if stats['frozen_steps'] > 0:
+            logging.info(f"   🧊 Frozen state fallbacks: {stats['frozen_steps']} ({stats['frozen_steps']/total*100:.1f}%)")
+        
+        logging.info("   Error breakdown:")
+        for error_type, count in stats.items():
+            if error_type.endswith('_errors') and count > 0:
+                logging.info(f"     {error_type.replace('_', ' ').title()}: {count}")
+        
+        # Recommendations
+        if stats['memory_errors'] > 0:
+            logging.info("💡 RECOMMENDATIONS:")
+            logging.info("   - Reduce batch size: --batch_size=50 or lower")
+            logging.info("   - Reduce sampling batch size in code (currently 50)")
+        
+        if stats['kde_failures'] > 0:
+            logging.info("💡 KDE failures suggest very deterministic policy or numerical issues")
+            
+        if stats['device_errors'] > 0:
+            logging.info("💡 Device errors suggest GPU/MPS compatibility issues")
 
 
 class DiffusionPolicyLandscapeVisualizer(BasePolicyLandscapeVisualizer):
@@ -733,7 +859,7 @@ class DiffusionPolicyLandscapeVisualizer(BasePolicyLandscapeVisualizer):
                 for i in range(0, n_samples, batch_size):
                     current_batch_size = min(batch_size, n_samples - i)
                     
-                    # Sample one action at a time to avoid batch size issues with diffusion policy queues
+                    # Sample one action at a time to avoid queue size mismatches
                     batch_actions = []
                     for j in range(current_batch_size):
                         # Sample single action to avoid queue size mismatches
@@ -833,19 +959,10 @@ class DiffusionPolicyLandscapeVisualizer(BasePolicyLandscapeVisualizer):
             return scores
             
         except Exception as e:
-            self.scoring_failures += 1
-            if self.scoring_failures <= 3:
-                logging.warning(f"Error computing diffusion sampling distribution: {e}. Falling back to distance metric.")
-            elif self.scoring_failures == 4:
-                logging.warning(f"Diffusion sampling consistently failing. Switching to distance metric for remaining steps.")
-                self.effective_scoring_method = "distance"
-            
-            # Fallback to distance metric
-            policy_action = self.policy.select_action({k: v[:1] for k, v in observation.items()})
-            # Keep everything on device for optimal GPU performance
-            distances = torch.norm(actions - policy_action, dim=1)
-            scores = -distances
+            return self._handle_fallback(e, "diffusion_sampling", actions)
         
+        # Record successful computation
+        self._record_successful_computation(scores)
         return scores
 
 
@@ -1024,19 +1141,10 @@ class ACTPolicyLandscapeVisualizer(BasePolicyLandscapeVisualizer):
             return scores
             
         except Exception as e:
-            self.scoring_failures += 1
-            if self.scoring_failures <= 3:
-                logging.warning(f"Error computing ACT sampling distribution: {e}. Falling back to distance metric.")
-            elif self.scoring_failures == 4:
-                logging.warning(f"ACT sampling consistently failing. Switching to distance metric for remaining steps.")
-                self.effective_scoring_method = "distance"
-            
-            # Fallback to distance metric
-            policy_action = self._get_policy_prediction({k: v[:1] for k, v in observation.items()})
-            policy_action_tensor = torch.from_numpy(policy_action).float().to(self.device)
-            distances = torch.norm(actions - policy_action_tensor, dim=1)
-            scores = -distances
+            return self._handle_fallback(e, "act_sampling", actions)
         
+        # Record successful computation
+        self._record_successful_computation(scores)
         return scores
 
 
@@ -1120,6 +1228,9 @@ def main():
     
     policy_name = visualizer._get_policy_name()
     logging.info(f"{policy_name} visualization complete!")
+    
+    # Print final fallback statistics summary
+    visualizer.print_fallback_statistics()
 
 
 if __name__ == "__main__":
