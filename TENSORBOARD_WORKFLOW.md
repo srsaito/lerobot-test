@@ -7,7 +7,9 @@ Every time you pull upstream changes, your TensorBoard modifications to `lerobot
 
 ## Solutions
 
-### Strategy 1: Git Patches (Recommended)
+### Strategy 1: Manual Git Patches (Recommended)
+
+This approach gives you full visibility and control over each step.
 
 **Setup (one-time):**
 1. Your TensorBoard patch is saved in `tensorboard_support.patch`
@@ -33,7 +35,25 @@ git commit -m "Reapply TensorBoard support after upstream merge"
 git push origin main
 ```
 
-### Strategy 2: Git Stash Method
+### Strategy 2: Automated Workflow (Alternative)
+
+**One-time setup:**
+```bash
+source setup_aliases.sh
+```
+
+**Then forever after, just run:**
+```bash
+pull-upstream-with-tensorboard
+```
+
+This single command will:
+1. 🔄 Fetch upstream changes
+2. 🔀 Merge upstream/main  
+3. 🔧 Apply TensorBoard patch automatically
+4. ✅ Commit the changes with proper message
+
+### Strategy 3: Git Stash Method
 
 **Workflow:**
 ```bash
@@ -53,7 +73,7 @@ git commit -m "Reapply TensorBoard support after upstream merge"
 git push origin main
 ```
 
-### Strategy 3: Custom Branch (Advanced)
+### Strategy 4: Custom Branch (Advanced)
 
 Create a dedicated branch for TensorBoard support:
 
