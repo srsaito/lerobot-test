@@ -35,45 +35,7 @@ git commit -m "Reapply TensorBoard support after upstream merge"
 git push origin main
 ```
 
-### Strategy 2: Automated Workflow (Alternative)
-
-**One-time setup:**
-```bash
-source setup_aliases.sh
-```
-
-**Then forever after, just run:**
-```bash
-pull-upstream-with-tensorboard
-```
-
-This single command will:
-1. 🔄 Fetch upstream changes
-2. 🔀 Merge upstream/main  
-3. 🔧 Apply TensorBoard patch automatically
-4. ✅ Commit the changes with proper message
-
-### Strategy 3: Git Stash Method
-
-**Workflow:**
-```bash
-# Before pulling upstream - save your TensorBoard changes
-./manage_tensorboard_stash.sh save
-
-# Pull upstream changes  
-git fetch upstream
-git merge upstream/main
-
-# Reapply TensorBoard support
-./manage_tensorboard_stash.sh apply
-
-# Commit and push
-git add lerobot/scripts/train.py
-git commit -m "Reapply TensorBoard support after upstream merge"
-git push origin main
-```
-
-### Strategy 4: Custom Branch (Advanced)
+### Alternative: Custom Branch (Advanced)
 
 Create a dedicated branch for TensorBoard support:
 
@@ -98,7 +60,7 @@ git merge feature/tensorboard-support
 
 - `tensorboard_support.patch` - Contains the TensorBoard changes as a patch
 - `apply_tensorboard_patch.sh` - Script to apply the patch automatically
-- `manage_tensorboard_stash.sh` - Script to manage TensorBoard changes via stash
+- `QUICK_REFERENCE.md` - Step-by-step manual workflow checklist
 
 ## TensorBoard Changes Summary
 
@@ -125,12 +87,6 @@ Then run:
 tensorboard --logdir=path/to/your/output/tensorboard
 ```
 
-## Automation
+## Quick Reference
 
-You can add this to your `.bashrc` or `.zshrc` for convenience:
-
-```bash
-alias pull-upstream='git fetch upstream && git merge upstream/main && ./apply_tensorboard_patch.sh'
-```
-
-Then just run `pull-upstream` whenever you want to update from upstream! 
+For step-by-step instructions, see `QUICK_REFERENCE.md` which provides a detailed checklist for the manual workflow. 
