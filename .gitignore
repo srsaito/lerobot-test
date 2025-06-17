@@ -173,3 +173,18 @@ dmypy.json
 
 # Cython debug symbols
 cython_debug/
+
+# Cache directories for visualization data
+.cache/
+data/
+*.zarr/
+
+# Local dataset files
+pusht_*.zarr/
+*_replay.zarr/
+
+# Visualization outputs
+outputs/
+visualizations/
+*.mp4
+*.gif

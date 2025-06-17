@@ -163,11 +163,12 @@ class AdvancedDiffusionPolicyLandscapeVisualizer:
             Initial state [agent_x, agent_y, block_x, block_y, block_angle]
         """
         try:
+            from zarr_dataset_manager import get_zarr_dataset_path
             import zarr
-            # Construct path to the raw dataset (assumes it's in a standard location)
-            # This is a bit hacky but necessary since LeRobot doesn't expose the full state
-            dataset_path = "/Users/stevensaito/robotics/ImitationHypeTest/pusht_cchi_v7_replay.zarr/data/state"
-            state_group = zarr.open(dataset_path, mode='r')
+            
+            # Get path to zarr dataset using our manager
+            dataset_path = get_zarr_dataset_path()
+            state_group = zarr.open(dataset_path / "data" / "state", mode='r')
             initial_state = state_group[episode_idx]  # Get initial state for this episode
             return np.array(initial_state)
         except Exception as e:

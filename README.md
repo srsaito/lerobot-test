@@ -434,3 +434,22 @@ primaryClass={cs.RO}
 ## Star History
 
 [![Star History Chart](https://api.star-history.com/svg?repos=huggingface/lerobot&type=Timeline)](https://star-history.com/#huggingface/lerobot&Timeline)
+
+## Zarr Dataset Management
+
+The PushT zarr dataset is automatically managed and cached for you.
+
+- **Default location:** `~/.cache/pusht_training_data/pusht_cchi_v7_replay.zarr`
+- **Override:** Set the `PUSHT_DATASET_CACHE` environment variable to use a custom cache directory.
+- The dataset will be downloaded automatically if not present.
+
+**No need to manually place the dataset in your repo.**
+
+## Manual Download (Optional)
+If you want to manually trigger the download, you can run:
+
+```bash
+python zarr_dataset_manager.py
+```
+
+This will ensure the dataset is present in your cache directory.
