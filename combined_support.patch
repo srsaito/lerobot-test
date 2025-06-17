@@ -1,0 +1,64 @@
+diff --git a/lerobot/scripts/train.py b/lerobot/scripts/train.py
+index 0de247be..1c4a7164 100644
+--- a/lerobot/scripts/train.py
++++ b/lerobot/scripts/train.py
+@@ -48,6 +48,7 @@ from lerobot.common.utils.utils import (
+     init_logging,
+ )
+ from lerobot.common.utils.wandb_utils import WandBLogger
++from lerobot.common.utils.tensorboard_utils import TensorBoardLogger
+ from lerobot.configs import parser
+ from lerobot.configs.train import TrainPipelineConfig
+ from lerobot.scripts.eval import eval_policy
+@@ -116,6 +117,12 @@ def train(cfg: TrainPipelineConfig):
+         wandb_logger = None
+         logging.info(colored("Logs will be saved locally.", "yellow", attrs=["bold"]))
+
++    # TensorBoard logger
++    if cfg.tensorboard.enable:
++        tensorboard_logger = TensorBoardLogger(cfg)
++    else:
++        tensorboard_logger = None
++
+     if cfg.seed is not None:
+         set_seed(cfg.seed)
+
+@@ -235,6 +242,11 @@ def train(cfg: TrainPipelineConfig):
+                 if output_dict:
+                     wandb_log_dict.update(output_dict)
+                 wandb_logger.log_dict(wandb_log_dict, step)
++            if tensorboard_logger:
++                tb_log_dict = train_tracker.to_dict()
++                if output_dict:
++                    tb_log_dict.update(output_dict)
++                tensorboard_logger.log_dict(tb_log_dict, step, mode="train")
+             train_tracker.reset_averages()
+
+         if cfg.save_checkpoint and is_saving_step:
+@@ -277,9 +289,14 @@ def train(cfg: TrainPipelineConfig):
+                 wandb_log_dict = {**eval_tracker.to_dict(), **eval_info}
+                 wandb_logger.log_dict(wandb_log_dict, step, mode="eval")
+                 wandb_logger.log_video(eval_info["video_paths"][0], step, mode="eval")
++            if tensorboard_logger:
++                tb_log_dict = {**eval_tracker.to_dict(), **eval_info}
++                tensorboard_logger.log_dict(tb_log_dict, step, mode="eval")
+
+     if eval_env:
+         eval_env.close()
++    if tensorboard_logger:
++        tensorboard_logger.close()
+     logging.info("End of training")
+
+
+diff --git a/pyproject.toml b/pyproject.toml
+index a99b1b16..b1234567 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -100,6 +100,7 @@ stretch = [
+ test = ["pytest>=8.1.0", "pytest-cov>=5.0.0", "mock-serial>=0.0.1 ; sys_platform != 'win32'"]
+ umi = ["imagecodecs>=2024.1.1"]
+ video_benchmark = ["scikit-image>=0.23.2", "pandas>=2.2.2"]
++visualization = ["matplotlib>=3.10.0", "seaborn>=0.13.0"]
+ xarm = ["gym-xarm>=0.1.1 ; python_version < '4.0'"]
+
+ [tool.poetry] 

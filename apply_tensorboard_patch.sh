@@ -1,25 +1,25 @@
 #!/bin/bash
 
-# Script to apply TensorBoard support patch after upstream merges
+# Script to apply TensorBoard and visualization support patch after upstream merges
 # Usage: ./apply_tensorboard_patch.sh
 
-echo "Applying TensorBoard support patch..."
+echo "Applying TensorBoard and visualization support patch..."
 
 # Check if patch file exists
-if [ ! -f "tensorboard_support.patch" ]; then
-    echo "Error: tensorboard_support.patch not found!"
+if [ ! -f "combined_support.patch" ]; then
+    echo "Error: combined_support.patch not found!"
     exit 1
 fi
 
 # Apply the patch
-git apply tensorboard_support.patch
+git apply combined_support.patch
 
 if [ $? -eq 0 ]; then
-    echo "✅ TensorBoard patch applied successfully!"
+    echo "✅ Combined patch applied successfully!"
     echo "You can now commit the changes with:"
-    echo "  git add lerobot/scripts/train.py"
-    echo "  git commit -m 'Apply TensorBoard support patch'"
+    echo "  git add lerobot/scripts/train.py pyproject.toml"
+    echo "  git commit -m 'Apply TensorBoard and visualization support patch'"
 else
     echo "❌ Patch failed to apply. You may need to resolve conflicts manually."
-    echo "Try: git apply --3way tensorboard_support.patch"
+    echo "Try: git apply --3way combined_support.patch"
 fi 
