@@ -45,7 +45,7 @@ import matplotlib.colors as mcolors
 import numpy as np
 import torch
 import torch.nn.functional as F
-from matplotlib.patches import FancyArrowPatch
+# from matplotlib.patches import FancyArrowPatch  # Removed - no longer using arrows
 from matplotlib.patches import Circle
 from tqdm import tqdm
 import cv2
@@ -174,15 +174,26 @@ class BasePolicyLandscapeVisualizer(ABC):
             return action.cpu().numpy().flatten()
     
     def _update_action_trace(self, expert_action: np.ndarray) -> None:
-        """Update the action trace with the current expert action."""
+        """Update the trace of recent expert actions."""
         self.action_trace.append(expert_action.copy())
-        # Keep only the last trace_length actions
         if len(self.action_trace) > self.trace_length:
             self.action_trace.pop(0)
-    
+
+    def _update_policy_trace(self, policy_action: np.ndarray) -> None:
+        """Update the trace of recent policy predictions."""
+        if not hasattr(self, 'policy_trace'):
+            self.policy_trace = []
+        self.policy_trace.append(policy_action.copy())
+        if len(self.policy_trace) > self.trace_length:
+            self.policy_trace.pop(0)
+
     def _reset_action_trace(self) -> None:
         """Reset the action trace for a new episode."""
         self.action_trace = []
+
+    def _reset_policy_trace(self) -> None:
+        """Reset the policy trace for a new episode."""
+        self.policy_trace = []
     
     def _load_episode_initial_state(self, episode_idx: int) -> np.ndarray:
         """Load the complete initial state for an episode from the raw zarr dataset.
@@ -191,11 +202,12 @@ class BasePolicyLandscapeVisualizer(ABC):
             Initial state [agent_x, agent_y, block_x, block_y, block_angle]
         """
         try:
+            from zarr_dataset_manager import get_zarr_dataset_path
             import zarr
-            # Construct path to the raw dataset (assumes it's in a standard location)
-            # This is a bit hacky but necessary since LeRobot doesn't expose the full state
-            dataset_path = "/Users/stevensaito/robotics/ImitationHypeTest/pusht_cchi_v7_replay.zarr/data/state"
-            state_group = zarr.open(dataset_path, mode='r')
+            
+            # Get path to zarr dataset using our manager
+            dataset_path = get_zarr_dataset_path()
+            state_group = zarr.open(dataset_path / "data" / "state", mode='r')
             initial_state = state_group[episode_idx]  # Get initial state for this episode
             return np.array(initial_state)
         except Exception as e:
@@ -382,7 +394,8 @@ class BasePolicyLandscapeVisualizer(ABC):
     def _create_enhanced_action_heatmap(
         self, 
         observation: Dict[str, torch.Tensor], 
-        expert_action: np.ndarray,
+        action: np.ndarray,
+        expert_mode: bool,
         show_policy_prediction: bool = True,
         show_confidence_intervals: bool = False,
     ) -> np.ndarray:
@@ -409,62 +422,74 @@ class BasePolicyLandscapeVisualizer(ABC):
             alpha=0.8
         )
         
-        # Draw expert action trace/snake if we have history
-        if len(self.action_trace) > 1:
-            # Transform all trace actions for plotting
-            trace_points = []
-            for trace_action in self.action_trace:
-                plot_trace_action = trace_action.copy()
-                plot_trace_action[1] = self.action_high[1] - trace_action[1] + self.action_low[1]
-                trace_points.append(plot_trace_action)
+        # In expert mode, show expert action trace and current expert action
+        if expert_mode:
+            # Draw expert action trace/snake if we have history
+            if len(self.action_trace) > 1:
+                # Transform all trace actions for plotting
+                trace_points = []
+                for trace_action in self.action_trace:
+                    plot_trace_action = trace_action.copy()
+                    plot_trace_action[1] = self.action_high[1] - trace_action[1] + self.action_low[1]
+                    trace_points.append(plot_trace_action)
+                
+                trace_points = np.array(trace_points)
+                
+                # Draw the trace line with varying alpha (newer points more opaque)
+                for i in range(len(trace_points) - 1):
+                    alpha = (i + 1) / len(trace_points)  # Increase alpha for newer segments
+                    ax.plot(
+                        trace_points[i:i+2, 0], 
+                        trace_points[i:i+2, 1], 
+                        'r-', 
+                        linewidth=3, 
+                        alpha=alpha * 0.8,
+                        solid_capstyle='round'
+                    )
+                
+                # Draw small circles for past positions
+                for i, point in enumerate(trace_points[:-1]):  # Exclude current position
+                    alpha = (i + 1) / len(trace_points)
+                    ax.plot(point[0], point[1], 'ro', markersize=4, alpha=alpha * 0.6)
             
-            trace_points = np.array(trace_points)
+            # Mark current expert action with red cross
+            # When using origin='upper', we need to flip Y coordinates for plotting
+            plot_expert_action = action.copy()
+            plot_expert_action[1] = self.action_high[1] - action[1] + self.action_low[1]
             
-            # Draw the trace line with varying alpha (newer points more opaque)
-            for i in range(len(trace_points) - 1):
-                alpha = (i + 1) / len(trace_points)  # Increase alpha for newer segments
-                ax.plot(
-                    trace_points[i:i+2, 0], 
-                    trace_points[i:i+2, 1], 
-                    'r-', 
-                    linewidth=3, 
-                    alpha=alpha * 0.8,
-                    solid_capstyle='round'
-                )
-            
-            # Draw small circles for past positions
-            for i, point in enumerate(trace_points[:-1]):  # Exclude current position
-                alpha = (i + 1) / len(trace_points)
-                ax.plot(point[0], point[1], 'ro', markersize=4, alpha=alpha * 0.6)
+            ax.plot(plot_expert_action[0], plot_expert_action[1], 'r+', markersize=20, markeredgewidth=4, 
+                    label='Expert Action')
         
-        # Mark current expert action with red cross
-        # When using origin='upper', we need to flip Y coordinates for plotting
-        plot_expert_action = expert_action.copy()
-        plot_expert_action[1] = self.action_high[1] - expert_action[1] + self.action_low[1]
-        
-        ax.plot(plot_expert_action[0], plot_expert_action[1], 'r+', markersize=20, markeredgewidth=4, 
-                label='Expert Action')
-        
-        # Show policy prediction if requested
+        # Show policy prediction if requested (in both modes)
         if show_policy_prediction:
             policy_action = self._get_policy_prediction(observation)
             plot_policy_action = policy_action.copy()
             plot_policy_action[1] = self.action_high[1] - policy_action[1] + self.action_low[1]
             
+            # Add policy prediction trace (snake-like trail of recent policy predictions)
+            if hasattr(self, 'policy_trace') and len(self.policy_trace) > 1:
+                policy_trace_points = []
+                for i, past_policy_action in enumerate(self.policy_trace[:-1]):  # Exclude current action
+                    # Apply coordinate transformation for plotting
+                    plot_past_policy_action = past_policy_action.copy()
+                    plot_past_policy_action[1] = self.action_high[1] - past_policy_action[1] + self.action_low[1]
+                    policy_trace_points.append(plot_past_policy_action)
+                    
+                    # Draw fading trace points
+                    alpha = (i + 1) / len(self.policy_trace)
+                    ax.plot(plot_past_policy_action[0], plot_past_policy_action[1], 'o', 
+                           color='yellow', markersize=3, alpha=alpha)
+                
+                # Draw lines connecting policy trace points
+                if len(policy_trace_points) > 1:
+                    for i in range(len(policy_trace_points) - 1):
+                        alpha = (i + 2) / len(self.policy_trace)  # +2 because we excluded current action
+                        ax.plot([policy_trace_points[i][0], policy_trace_points[i+1][0]], 
+                               [policy_trace_points[i][1], policy_trace_points[i+1][1]], 
+                               'y-', alpha=alpha, linewidth=2)
+            
             ax.plot(plot_policy_action[0], plot_policy_action[1], 'w*', markersize=15, markeredgewidth=2, 
                     markeredgecolor='black', label='Policy Prediction')
-            
-            # Draw arrow from policy prediction to expert action
-            arrow = FancyArrowPatch(
-                (plot_policy_action[0], plot_policy_action[1]),
-                (plot_expert_action[0], plot_expert_action[1]),
-                arrowstyle='->',
-                mutation_scale=20,
-                color='yellow',
-                linewidth=2,
-                alpha=0.7
-            )
-            ax.add_patch(arrow)
         
         # Add confidence intervals if requested
         if show_confidence_intervals:
@@ -515,140 +540,226 @@ class BasePolicyLandscapeVisualizer(ABC):
         target_width = int(target_height * aspect_ratio)
         return cv2.resize(frame, (target_width, target_height))
     
+    def _action_to_env_coords(self, action: np.ndarray, env_frame_shape: tuple) -> tuple:
+        """Convert action coordinates to environment frame pixel coordinates.
+        
+        Args:
+            action: Action in environment coordinate system [x, y]
+            env_frame_shape: Shape of environment frame (height, width, channels)
+            
+        Returns:
+            (pixel_x, pixel_y) coordinates in the environment frame
+        """
+        # PushT environment bounds (from gym_pusht)
+        # The environment renders a 512x512 pixel view of a coordinate system
+        # Action space is typically [-1, 1] for both x and y
+        env_height, env_width = env_frame_shape[:2]
+        
+        # Convert action coordinates to pixel coordinates
+        # Assuming action space is normalized to [-1, 1] and environment is 512x512
+        # Map action [-1, 1] to pixel [0, 512]
+        pixel_x = int((action[0] - self.action_low[0]) / (self.action_high[0] - self.action_low[0]) * env_width)
+        pixel_y = int((action[1] - self.action_low[1]) / (self.action_high[1] - self.action_low[1]) * env_height)
+        
+        # Clamp to frame bounds
+        pixel_x = max(0, min(env_width - 1, pixel_x))
+        pixel_y = max(0, min(env_height - 1, pixel_y))
+        
+        return pixel_x, pixel_y
+
+    def _overlay_policy_predictions_on_env(self, env_frame: np.ndarray, policy_action: np.ndarray, expert_mode: bool) -> np.ndarray:
+        """Overlay policy predictions and traces on environment frame.
+        
+        Args:
+            env_frame: Environment frame to overlay on
+            policy_action: Current policy prediction
+            expert_mode: Whether we're in expert mode (affects what to show)
+            
+        Returns:
+            Environment frame with overlays
+        """
+        frame = env_frame.copy()
+        
+        # Draw policy prediction trace (if exists)
+        if hasattr(self, 'policy_trace') and len(self.policy_trace) > 1:
+            trace_points = []
+            for i, past_action in enumerate(self.policy_trace[:-1]):  # Exclude current action
+                pixel_x, pixel_y = self._action_to_env_coords(past_action, frame.shape)
+                trace_points.append((pixel_x, pixel_y))
+                
+                # Draw fading trace points
+                alpha = (i + 1) / len(self.policy_trace)
+                color_intensity = int(255 * alpha)
+                cv2.circle(frame, (pixel_x, pixel_y), 3, (color_intensity, color_intensity, 0), -1)  # Yellow circles
+            
+            # Draw lines connecting trace points
+            for i in range(len(trace_points) - 1):
+                alpha = (i + 2) / len(self.policy_trace)  # +2 because we excluded current action
+                color_intensity = int(255 * alpha)
+                cv2.line(frame, trace_points[i], trace_points[i + 1], (color_intensity, color_intensity, 0), 2)
+        
+        # Draw current policy prediction as a star
+        pixel_x, pixel_y = self._action_to_env_coords(policy_action, frame.shape)
+        
+        # Draw a star shape (approximated with lines)
+        star_size = 8
+        # Draw + shape
+        cv2.line(frame, (pixel_x - star_size, pixel_y), (pixel_x + star_size, pixel_y), (255, 255, 255), 3)  # White
+        cv2.line(frame, (pixel_x, pixel_y - star_size), (pixel_x, pixel_y + star_size), (255, 255, 255), 3)  # White
+        # Draw x shape
+        cv2.line(frame, (pixel_x - star_size//2, pixel_y - star_size//2), (pixel_x + star_size//2, pixel_y + star_size//2), (255, 255, 255), 2)
+        cv2.line(frame, (pixel_x - star_size//2, pixel_y + star_size//2), (pixel_x + star_size//2, pixel_y - star_size//2), (255, 255, 255), 2)
+        
+        return frame
+
     def visualize_episode(
         self, 
-        episode_idx: int, 
-        output_dir: Path, 
+        episode_idx: Optional[int] = None, 
+        output_dir: Path = Path("outputs/policy_landscape_viz"), 
         max_steps: Optional[int] = None,
         show_policy_prediction: bool = True,
         show_confidence_intervals: bool = False,
         target_height: int = 480,
     ) -> None:
         """
-        Create advanced side-by-side visualization for an episode.
-        
-        Args:
-            episode_idx: Episode index from dataset
-            output_dir: Directory to save outputs
-            max_steps: Maximum number of steps to visualize
-            show_policy_prediction: Whether to show policy's predicted action
-            show_confidence_intervals: Whether to show confidence interval contours
-            target_height: Target height for video frames
+        Visualize an episode in two modes:
+        1. Expert replay mode (episode_idx specified): replay expert actions.
+        2. Policy rollout mode (episode_idx is None): let policy drive actions.
         """
         output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
-        
-        # Get episode data from dataset using episode_data_index
-        from_idx = self.dataset.episode_data_index["from"][episode_idx].item()
-        to_idx = self.dataset.episode_data_index["to"][episode_idx].item()
-        episode_data = self.dataset.hf_dataset.select(range(from_idx, to_idx))
-        
-        # Extract actions and other data
-        expert_actions = np.array(episode_data["action"])
-        
-        if max_steps is not None:
-            expert_actions = expert_actions[:max_steps]
-            to_idx = min(to_idx, from_idx + max_steps)
-        
-        # Load full initial state from raw zarr dataset (includes T-shape position!)
-        initial_state = self._load_episode_initial_state(episode_idx)
-        
-        # Reset environment to random state first
+
+        # --- Mode selection ---
+        expert_mode = episode_idx is not None
+
+        if expert_mode:
+            # --- Expert Replay Mode ---
+            # Get episode data from dataset using episode_data_index
+            from_idx = self.dataset.episode_data_index["from"][episode_idx].item()
+            to_idx = self.dataset.episode_data_index["to"][episode_idx].item()
+            episode_data = self.dataset.hf_dataset.select(range(from_idx, to_idx))
+            expert_actions = np.array(episode_data["action"])
+            if max_steps is not None:
+                expert_actions = expert_actions[:max_steps]
+                to_idx = min(to_idx, from_idx + max_steps)
+            # Load full initial state from raw zarr dataset (includes T-shape position!)
+            initial_state = self._load_episode_initial_state(episode_idx)
+        else:
+            # --- Policy Rollout Mode ---
+            expert_actions = None  # Not used
+            initial_state = None   # Let env randomize or use default
+
+        # --- Reset environment ---
         obs, _ = self.env.reset()
-        
-        # Set the complete initial state from the dataset
-        self.env.unwrapped.agent.position = list(initial_state[:2])          # [agent_x, agent_y]
-        self.env.unwrapped.block.position = list(initial_state[2:4])         # [block_x, block_y] 
-        self.env.unwrapped.block.angle = initial_state[4]                    # block_angle
-        self.env.unwrapped.space.step(self.env.unwrapped.dt)
-        
-        # Get updated observation after setting complete state
-        # Use environment's observation method to get properly formatted observation
-        obs = self.env.unwrapped.get_obs()
-        
+
+        if expert_mode:
+            # Set the complete initial state from the dataset
+            self.env.unwrapped.agent.position = list(initial_state[:2])          # [agent_x, agent_y]
+            self.env.unwrapped.block.position = list(initial_state[2:4])         # [block_x, block_y] 
+            self.env.unwrapped.block.angle = initial_state[4]                    # block_angle
+            self.env.unwrapped.space.step(self.env.unwrapped.dt)
+            # Get updated observation after setting complete state
+            obs = self.env.unwrapped.get_obs()
+
         # Reset action trace for new episode
         self._reset_action_trace()
-        
+        self._reset_policy_trace()
+
         # Storage for frames
         left_frames = []  # Environment frames
         right_frames = []  # Action landscape heatmaps
         combined_frames = []
-        
+
         policy_name = self._get_policy_name()
-        logging.info(f"Generating {policy_name} visualization for episode {episode_idx} with {len(expert_actions)} steps")
+        mode_str = "Expert Replay" if expert_mode else "Policy Rollout"
+        logging.info(f"Generating {policy_name} visualization in {mode_str} mode for episode {episode_idx if expert_mode else 'N/A'}")
         logging.info(f"Scoring method: {self.scoring_method}, Colormap: {self.colormap}")
-        
+
         # Track current observation for fallback handling
         self.current_observation = None
-        
-        for step in tqdm(range(len(expert_actions))):
-            # Get current expert action
-            expert_action = expert_actions[step]
-            
-            # Update action trace with current expert action
-            self._update_action_trace(expert_action)
-            
-            # Render current environment state
-            env_frame = self.env.render()
-            left_frames.append(env_frame)
-            
-            # Load the original image from dataset for this step
-            dataset_image = self._load_episode_image(episode_idx, step)
-            
+
+        # --- Main loop ---
+        step_range = range(len(expert_actions)) if expert_mode else range(max_steps or 200)
+        for step in tqdm(step_range):
+            if expert_mode:
+                # Get current expert action
+                action = expert_actions[step]
+                # Update expert action trace
+                self._update_action_trace(action)
+            else:
+                # Policy rollout: get action from policy
+                policy_obs = self._prepare_observation_for_policy(obs)
+                action = self._get_policy_prediction(policy_obs)
+
+            # Load the original image from dataset for this step (only in expert mode)
+            dataset_image = self._load_episode_image(episode_idx, step) if expert_mode else None
+
             # Prepare observation for policy (using dataset image if available)
             policy_obs = self._prepare_observation_for_policy(obs, dataset_image)
             self.current_observation = policy_obs  # Store for fallback handling
+
+            # Get policy prediction for visualization (in both modes)
+            if show_policy_prediction:
+                policy_action = self._get_policy_prediction(policy_obs)
+                self._update_policy_trace(policy_action)
+            else:
+                policy_action = None
+
+            # Render current environment state
+            env_frame = self.env.render()
             
+            # Overlay policy predictions on environment frame if requested
+            if show_policy_prediction and policy_action is not None:
+                env_frame = self._overlay_policy_predictions_on_env(env_frame, policy_action, expert_mode)
+            
+            left_frames.append(env_frame)
+
             # Create enhanced action landscape heatmap
             heatmap_frame = self._create_enhanced_action_heatmap(
                 policy_obs, 
-                expert_action,
+                action,
+                expert_mode,
                 show_policy_prediction=show_policy_prediction,
                 show_confidence_intervals=show_confidence_intervals,
             )
             right_frames.append(heatmap_frame)
-            
+
             # Resize frames to target height
             env_frame_resized = self._resize_frame(env_frame, target_height)
             heatmap_frame_resized = self._resize_frame(heatmap_frame, target_height)
-            
+
             # Combine horizontally
             combined_frame = np.hstack([env_frame_resized, heatmap_frame_resized])
             combined_frames.append(combined_frame)
-            
-            # Step environment with expert action
-            obs, _, terminated, truncated, _ = self.env.step(expert_action)
-            
+
+            # Step environment
+            obs, _, terminated, truncated, _ = self.env.step(action)
             if terminated or truncated:
                 break
-        
+
         # Save videos
         logging.info("Saving frame sequences...")
-        
         fps = 10
-        env_video_path = output_dir / f"episode_{episode_idx}_environment.mp4"
+        env_video_path = output_dir / f"episode_{episode_idx if expert_mode else 'policy'}_environment.mp4"
         imageio.mimsave(str(env_video_path), left_frames, fps=fps)
-        
-        heatmap_video_path = output_dir / f"episode_{episode_idx}_heatmaps_{self.scoring_method}.mp4"
+        heatmap_video_path = output_dir / f"episode_{episode_idx if expert_mode else 'policy'}_heatmaps_{self.scoring_method}.mp4"
         imageio.mimsave(str(heatmap_video_path), right_frames, fps=fps)
-        
-        combined_video_path = output_dir / f"episode_{episode_idx}_combined_{self.scoring_method}.mp4"
+        combined_video_path = output_dir / f"episode_{episode_idx if expert_mode else 'policy'}_combined_{self.scoring_method}.mp4"
         imageio.mimsave(str(combined_video_path), combined_frames, fps=fps)
-        
         logging.info(f"Videos saved:")
         logging.info(f"  Environment: {env_video_path}")
         logging.info(f"  Heatmaps: {heatmap_video_path}")
         logging.info(f"  Combined: {combined_video_path}")
-        
+
         # Save configuration and statistics
         config = {
-            "episode_idx": episode_idx,
-            "num_steps": len(expert_actions),
+            "episode_idx": episode_idx if expert_mode else None,
+            "num_steps": len(combined_frames),
             "initial_state": {
-                "agent_pos": initial_state[:2].tolist(),
-                "block_pos": initial_state[2:4].tolist(),
-                "block_angle": float(initial_state[4])
-            },
+                "agent_pos": initial_state[:2].tolist() if expert_mode else None,
+                "block_pos": initial_state[2:4].tolist() if expert_mode else None,
+                "block_angle": float(initial_state[4]) if expert_mode else None
+            } if expert_mode else None,
             "action_resolution": self.action_resolution,
             "scoring_method": self.scoring_method,
             "colormap": self.colormap,
@@ -656,12 +767,12 @@ class BasePolicyLandscapeVisualizer(ABC):
             "show_confidence_intervals": show_confidence_intervals,
             "target_height": target_height,
             "policy_type": self._get_policy_name().lower().replace(" ", "_"),
-            "note": "Complete initial state loaded from zarr dataset, images loaded from HuggingFace video dataset",
+            "mode": mode_str,
+            "note": f"{'Complete initial state loaded from zarr dataset, images loaded from HuggingFace video dataset' if expert_mode else 'Policy rollout, initial state randomized or default'}",
         }
-        
-        with open(output_dir / f"episode_{episode_idx}_config_{self._get_policy_name().lower().replace(' ', '_')}.json", "w") as f:
+        with open(output_dir / f"episode_{episode_idx if expert_mode else 'policy'}_config_{self._get_policy_name().lower().replace(' ', '_')}.json", "w") as f:
             json.dump(config, f, indent=2)
-        
+
         # Print fallback statistics
         self.print_fallback_statistics()
 
@@ -1170,24 +1281,24 @@ def main():
                        choices=["diffusion", "act"], 
                        help="Type of policy to visualize")
     parser.add_argument("--policy_path", type=str, required=True, 
-                       help="Path to trained policy (use 'PLACEHOLDER_ACT_MODEL' for ACT placeholder)")
+                       help="Path to trained policy")
     parser.add_argument("--dataset_repo_id", type=str, default="lerobot/pusht",
-                       help="HuggingFace dataset repository ID")
-    parser.add_argument("--episode_idx", type=int, default=0,
-                       help="Episode index to visualize")
+                       help="HuggingFace dataset repository ID for training dataset. Must be PushT compatible.")
+    parser.add_argument("--episode_idx", type=int, default=None,
+                       help="Dataset episode index to visualize (if not provided, runs in policy rollout mode)")
     parser.add_argument("--output_dir", type=str, default="outputs/policy_landscape_viz",
-                       help="Output directory for videos")
+                       help="Output directory for visualization videos")
     parser.add_argument("--action_resolution", type=int, default=50,
-                       help="Resolution for action space sampling (NxN grid)")
+                       help="Resolution for action space sampling (e.g., 50 would be for a 50x50 grid)")
     parser.add_argument("--max_steps", type=int, default=None,
                        help="Maximum number of steps to visualize")
     parser.add_argument("--device", type=str, default="cuda",
-                       help="Device to run policy on")
+                       help="Device to run policy on - cuda, mps, or cpu")
     parser.add_argument("--scoring_method", type=str, default="distance",
                        choices=["likelihood", "distance"],
                        help="Method for scoring actions")
     parser.add_argument("--colormap", type=str, default="viridis",
-                       help="Matplotlib colormap for heatmap")
+                       help="Matplotlib colormap for heatmap. Default is viridis.")
     parser.add_argument("--show_policy_prediction", type=bool, default=True,
                        help="Whether to show policy's predicted action")
     parser.add_argument("--show_confidence_intervals", type=bool, default=False,
@@ -1230,6 +1341,7 @@ def main():
     logging.info(f"{policy_name} visualization complete!")
     
     # Print final fallback statistics summary
+    # Fallback occurs when there is an error during action generation by the policy.
     visualizer.print_fallback_statistics()
 
 
