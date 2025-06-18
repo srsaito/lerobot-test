@@ -36,15 +36,8 @@ from lerobot.common.policies.diffusion.modeling_diffusion import DiffusionPolicy
 output_directory = Path("outputs/eval/example_pusht_diffusion")
 output_directory.mkdir(parents=True, exist_ok=True)
 
-# Select your device - auto-detect best available device
-if torch.cuda.is_available():
-    device = "cuda"
-elif torch.backends.mps.is_available():
-    device = "mps"
-else:
-    device = "cpu"
-
-print(f"Using device: {device}")
+# Select your device
+device = "cuda"
 
 # Provide the [hugging face repo id](https://huggingface.co/lerobot/diffusion_pusht):
 pretrained_policy_path = "lerobot/diffusion_pusht"
@@ -74,7 +67,7 @@ print(env.action_space)
 
 # Reset the policy and environments to prepare for rollout
 policy.reset()
-numpy_observation, info = env.reset(seed=129)
+numpy_observation, info = env.reset(seed=42)
 
 # Prepare to collect every rewards and all the frames of the episode,
 # from initial state to final state.
@@ -97,13 +90,9 @@ while not done:
     image = image.to(torch.float32) / 255
     image = image.permute(2, 0, 1)
 
-    # Send data tensors from CPU to GPU/MPS - use non_blocking only for CUDA
-    if device == "cuda":
-        state = state.to(device, non_blocking=True)
-        image = image.to(device, non_blocking=True)
-    else:
-        state = state.to(device)
-        image = image.to(device)
+    # Send data tensors from CPU to GPU
+    state = state.to(device, non_blocking=True)
+    image = image.to(device, non_blocking=True)
 
     # Add extra (empty) batch dimension, required to forward the policy
     state = state.unsqueeze(0)
