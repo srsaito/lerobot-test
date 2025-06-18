@@ -147,17 +147,13 @@ class BasePolicyLandscapeVisualizer(ABC):
         
         return torch.from_numpy(actions).float().to(self.device)
     
-    def _prepare_observation_for_policy(self, obs_dict: Dict, dataset_image: torch.Tensor = None) -> Dict[str, torch.Tensor]:
+    def _prepare_observation_for_policy(self, obs_dict: Dict) -> Dict[str, torch.Tensor]:
         """Convert environment observation to policy input format."""
         state = torch.from_numpy(obs_dict["agent_pos"]).float()
         
-        # Use dataset image if provided, otherwise use environment's rendered image
-        if dataset_image is not None:
-            # Dataset images are already in CHW format and [0, 1] range
-            image = dataset_image.float()
-        else:
-            image = torch.from_numpy(obs_dict["pixels"]).float() / 255.0
-            image = image.permute(2, 0, 1)  # HWC to CHW
+        # Always use environment's actual rendered image for consistent policy input
+        image = torch.from_numpy(obs_dict["pixels"]).float() / 255.0
+        image = image.permute(2, 0, 1)  # HWC to CHW
         
         state = state.unsqueeze(0).to(self.device)
         image = image.unsqueeze(0).to(self.device)
@@ -651,6 +647,9 @@ class BasePolicyLandscapeVisualizer(ABC):
 
         # --- Reset environment ---
         obs, _ = self.env.reset()
+        
+        # --- Reset policy internal state ---
+        self.policy.reset()
 
         if expert_mode:
             # Set the complete initial state from the dataset
@@ -691,11 +690,8 @@ class BasePolicyLandscapeVisualizer(ABC):
                 policy_obs = self._prepare_observation_for_policy(obs)
                 action = self._get_policy_prediction(policy_obs)
 
-            # Load the original image from dataset for this step (only in expert mode)
-            dataset_image = self._load_episode_image(episode_idx, step) if expert_mode else None
-
-            # Prepare observation for policy (using dataset image if available)
-            policy_obs = self._prepare_observation_for_policy(obs, dataset_image)
+            # Prepare observation for policy using current environment state
+            policy_obs = self._prepare_observation_for_policy(obs)
             self.current_observation = policy_obs  # Store for fallback handling
 
             # Get policy prediction for visualization (in both modes)
