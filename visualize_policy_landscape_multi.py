@@ -69,6 +69,7 @@ class BasePolicyLandscapeVisualizer(ABC):
         colormap: str = "viridis",
         batch_size: int = 100,
         trace_length: int = 10,
+        n_samples: int = 500,
     ):
         self.policy_path = policy_path
         self.dataset_repo_id = dataset_repo_id
@@ -79,6 +80,7 @@ class BasePolicyLandscapeVisualizer(ABC):
         self.colormap = colormap
         self.batch_size = batch_size
         self.trace_length = trace_length
+        self.n_samples = n_samples
         
         # Fallback tracking and statistics
         self.fallback_stats = {
@@ -125,7 +127,8 @@ class BasePolicyLandscapeVisualizer(ABC):
         logging.info(f"Action space: [{self.action_low[0]}, {self.action_high[0]}] x [{self.action_low[1]}, {self.action_high[1]}]")
         logging.info(f"Action grid shape: {self.action_grid.shape}")
         logging.info(f"Scoring method: {self.scoring_method}")
-        logging.info(f"Batch sizes: main={self.batch_size}, sampling=50 (adjustable)")
+        logging.info(f"Batch sizes: main={self.batch_size}, sampling={self.batch_size} (unified)")
+        logging.info(f"Policy samples for likelihood estimation: {self.n_samples}")
         
     @abstractmethod
     def _load_policy(self):
@@ -953,7 +956,7 @@ class DiffusionPolicyLandscapeVisualizer(BasePolicyLandscapeVisualizer):
         """
         try:
             # Sample from diffusion policy to build empirical distribution
-            n_samples = 500  # Number of diffusion samples (reduced for debugging)
+            n_samples = self.n_samples  # Configurable number of diffusion samples
             
             # Create single observation for sampling
             single_obs = {k: v[:1] for k, v in observation.items()}
@@ -961,7 +964,7 @@ class DiffusionPolicyLandscapeVisualizer(BasePolicyLandscapeVisualizer):
             # Sample action sequences from diffusion policy
             with torch.no_grad():
                 sampled_actions = []
-                batch_size = 50  # Process in smaller batches to avoid memory issues
+                batch_size = self.batch_size  # Use full batch size for maximum GPU utilization
                 
                 for i in range(0, n_samples, batch_size):
                     current_batch_size = min(batch_size, n_samples - i)
@@ -1136,7 +1139,7 @@ class ACTPolicyLandscapeVisualizer(BasePolicyLandscapeVisualizer):
 
         try:
             # Sample from ACT policy using latent variable sampling
-            n_samples = 500  # Number of latent samples
+            n_samples = self.n_samples  # Configurable number of latent samples
             
             # Create single observation for sampling
             single_obs = {k: v[:1] for k, v in observation.items()}
@@ -1144,7 +1147,7 @@ class ACTPolicyLandscapeVisualizer(BasePolicyLandscapeVisualizer):
             # Sample latent variables and decode to actions
             with torch.no_grad():
                 sampled_actions = []
-                batch_size = 50  # Process in smaller batches
+                batch_size = self.batch_size  # Use full batch size for maximum GPU utilization
                 
                 for i in range(0, n_samples, batch_size):
                     current_batch_size = min(batch_size, n_samples - i)
@@ -1305,6 +1308,8 @@ def main():
                        help="Target height for video frames")
     parser.add_argument("--trace_length", type=int, default=10,
                        help="Number of past expert actions to show in trace")
+    parser.add_argument("--n_samples", type=int, default=500,
+                       help="Number of policy samples for likelihood estimation (lower = faster)")
     
     args = parser.parse_args()
     
@@ -1321,6 +1326,7 @@ def main():
         colormap=args.colormap,
         batch_size=args.batch_size,
         trace_length=args.trace_length,
+        n_samples=args.n_samples,
     )
     
     # Generate visualization
