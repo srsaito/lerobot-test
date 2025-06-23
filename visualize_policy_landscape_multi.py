@@ -175,7 +175,7 @@ class BasePolicyLandscapeVisualizer(ABC):
     
     def _get_policy_prediction(self, observation: Dict[str, torch.Tensor]) -> np.ndarray:
         """Get the policy's predicted action for the current observation."""
-        with torch.no_grad():
+        with torch.inference_mode():
             action = self.policy.select_action(observation)
             return action.cpu().numpy().flatten()
     
@@ -281,7 +281,7 @@ class BasePolicyLandscapeVisualizer(ABC):
                 else:
                     expanded_obs[key] = value.expand(batch_size, -1)
             
-            with torch.no_grad():
+            with torch.inference_mode():
                 if self.effective_scoring_method == "likelihood":
                     # Use the diffusion model's likelihood of generating these actions
                     scores = self._compute_action_likelihood(expanded_obs, batch_actions)
@@ -942,7 +942,7 @@ class DiffusionPolicyLandscapeVisualizer(BasePolicyLandscapeVisualizer):
     
     def _get_policy_prediction(self, observation: Dict[str, torch.Tensor]) -> np.ndarray:
         """Get the policy's predicted action for the current observation."""
-        with torch.no_grad():
+        with torch.inference_mode():
             action = self.policy.select_action(observation)
             return action.cpu().numpy().flatten()
     
@@ -969,7 +969,7 @@ class DiffusionPolicyLandscapeVisualizer(BasePolicyLandscapeVisualizer):
             single_obs = {k: v[:1] for k, v in observation.items()}
             
             # Sample action sequences from diffusion policy
-            with torch.no_grad():
+            with torch.inference_mode():
                 sampled_actions = []
                 batch_size = self.batch_size  # Use full batch size for maximum GPU utilization
                 
@@ -1117,7 +1117,7 @@ class ACTPolicyLandscapeVisualizer(BasePolicyLandscapeVisualizer):
             # Return dummy action for placeholder (center of action space)
             return np.array([256.0, 256.0])
         
-        with torch.no_grad():
+        with torch.inference_mode():
             action = self.policy.select_action(observation)
             return action.cpu().numpy().flatten()
     
@@ -1152,7 +1152,7 @@ class ACTPolicyLandscapeVisualizer(BasePolicyLandscapeVisualizer):
             single_obs = {k: v[:1] for k, v in observation.items()}
             
             # Sample latent variables and decode to actions
-            with torch.no_grad():
+            with torch.inference_mode():
                 sampled_actions = []
                 batch_size = self.batch_size  # Use full batch size for maximum GPU utilization
                 
