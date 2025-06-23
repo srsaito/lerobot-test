@@ -1,7 +1,14 @@
 #!/usr/bin/env python3
 
 """
-Multi-Policy Action Landscape Visualizer
+DEPRECATED: Multi-Policy Action Landscape Visualizer
+
+⚠️  THIS SCRIPT IS DEPRECATED ⚠️
+Please use viz_action_space.py instead for policy visualization.
+
+This script is kept for reference only and should not be used for new work.
+
+---
 
 Supports visualization of action landscapes for different policy types:
 - Diffusion Policy
