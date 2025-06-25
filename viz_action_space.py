@@ -459,7 +459,7 @@ class PolicyActionSpaceVisualizer:
         
         # Create heat map with proper coordinate system (matching PushT's inverted Y)
         im = ax.imshow(
-            hist,  # Don't transpose - use raw histogram
+            hist.T,  # TRANSPOSE the histogram to match imshow's coordinate system
             extent=[self.action_bounds['low'][0], self.action_bounds['high'][0], 
                    self.action_bounds['low'][1], self.action_bounds['high'][1]],
             origin='upper',  # Use upper origin to match PushT's coordinate system
