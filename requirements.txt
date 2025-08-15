@@ -1,0 +1,9 @@
+numpy>=1.24.0
+torch>=2.0.0
+zarr>=2.14.0
+requests>=2.31.0
+tqdm>=4.66.0
+matplotlib>=3.7.0
+imageio>=2.31.0
+imageio-ffmpeg>=0.4.9
+lerobot>=0.1.0 
