@@ -69,3 +69,12 @@ class EvalConfig:
                 f"to increase the number of episodes to match the batch size (e.g. `eval.n_episodes={self.batch_size}`), "
                 f"or lower the batch size (e.g. `eval.batch_size={self.n_episodes}`)."
             )
+
+
+@dataclass
+class TensorBoardConfig:
+    enable: bool = False
+    log_dir: str | None = None  # defaults to output_dir/tensorboard
+    comment: str | None = None
+    flush_secs: int = 120
+    disable_artifact: bool = False

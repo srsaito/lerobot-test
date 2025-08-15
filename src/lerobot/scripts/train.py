@@ -51,6 +51,7 @@ from lerobot.utils.utils import (
     init_logging,
 )
 from lerobot.utils.wandb_utils import WandBLogger
+from lerobot.utils.tensorboard_utils import TensorBoardLogger
 
 
 def update_policy(
@@ -115,6 +116,12 @@ def train(cfg: TrainPipelineConfig):
     else:
         wandb_logger = None
         logging.info(colored("Logs will be saved locally.", "yellow", attrs=["bold"]))
+
+    # TensorBoard logger (optional)
+    if cfg.tensorboard.enable:
+        tensorboard_logger = TensorBoardLogger(cfg)
+    else:
+        tensorboard_logger = None
 
     if cfg.seed is not None:
         set_seed(cfg.seed)
@@ -235,6 +242,11 @@ def train(cfg: TrainPipelineConfig):
                 if output_dict:
                     wandb_log_dict.update(output_dict)
                 wandb_logger.log_dict(wandb_log_dict, step)
+            if tensorboard_logger:
+                tb_log_dict = train_tracker.to_dict()
+                if output_dict:
+                    tb_log_dict.update(output_dict)
+                tensorboard_logger.log_dict(tb_log_dict, step, mode="train")
             train_tracker.reset_averages()
 
         if cfg.save_checkpoint and is_saving_step:
@@ -244,6 +256,8 @@ def train(cfg: TrainPipelineConfig):
             update_last_checkpoint(checkpoint_dir)
             if wandb_logger:
                 wandb_logger.log_policy(checkpoint_dir)
+            if tensorboard_logger:
+                tensorboard_logger.log_policy(checkpoint_dir)
 
         if cfg.env and is_eval_step:
             step_id = get_step_identifier(step, cfg.steps)
@@ -277,9 +291,14 @@ def train(cfg: TrainPipelineConfig):
                 wandb_log_dict = {**eval_tracker.to_dict(), **eval_info}
                 wandb_logger.log_dict(wandb_log_dict, step, mode="eval")
                 wandb_logger.log_video(eval_info["video_paths"][0], step, mode="eval")
+            if tensorboard_logger:
+                tb_log_dict = {**eval_tracker.to_dict(), **eval_info}
+                tensorboard_logger.log_dict(tb_log_dict, step, mode="eval")
 
     if eval_env:
         eval_env.close()
+    if tensorboard_logger:
+        tensorboard_logger.close()
     logging.info("End of training")
 
     if cfg.policy.push_to_hub:

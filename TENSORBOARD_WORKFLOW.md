@@ -3,7 +3,7 @@
 This document describes how to maintain TensorBoard support in your fork while pulling upstream changes from HuggingFace lerobot.
 
 ## Problem
-Every time you pull upstream changes, your TensorBoard modifications to `lerobot/scripts/train.py` get overwritten because upstream doesn't have TensorBoard support.
+Upstream v0.3.3 does not ship TensorBoard logging. Your fork adds it. After upgrading, you want to preserve this functionality under the new `src/` layout.
 
 ## Solutions
 
@@ -12,7 +12,7 @@ Every time you pull upstream changes, your TensorBoard modifications to `lerobot
 This approach gives you full visibility and control over each step.
 
 **Setup (one-time):**
-1. Your TensorBoard patch is saved in `tensorboard_support.patch`
+1. Your TensorBoard patch is saved in `tensorboard_support.patch` (updated for `src/` layout)
 2. Use the script `apply_tensorboard_patch.sh` to reapply after merges
 
 **Workflow:**
@@ -20,15 +20,15 @@ This approach gives you full visibility and control over each step.
 # Before pulling upstream
 git status  # Make sure working directory is clean
 
-# Pull upstream changes
-git fetch upstream
-git merge upstream/main
+# Pull upstream changes (or tag)
+git fetch upstream --tags
+git merge upstream/main  # or merge a tag (e.g., v0.3.3)
 
-# Reapply TensorBoard support
+# Reapply TensorBoard support to src layout
 ./apply_tensorboard_patch.sh
 
 # Commit the changes
-git add lerobot/scripts/train.py
+git add src/lerobot/scripts/train.py src/lerobot/configs/default.py src/lerobot/configs/train.py src/lerobot/utils/tensorboard_utils.py
 git commit -m "Reapply TensorBoard support after upstream merge"
 
 # Push to your fork
@@ -56,30 +56,32 @@ git checkout main
 git merge feature/tensorboard-support
 ```
 
-## Files Created
+## Files Created / Modified by the patch
 
-- `tensorboard_support.patch` - Contains the TensorBoard changes as a patch
+- `tensorboard_support.patch` - Patch for: `src/lerobot/scripts/train.py`, `src/lerobot/configs/{default.py,train.py}`, and adds `src/lerobot/utils/tensorboard_utils.py`.
+- `combined_support.patch` - Includes TensorBoard plus small quality-of-life changes (e.g., device auto-detect in example). Optional.
 - `apply_tensorboard_patch.sh` - Script to apply the patch automatically
 - `QUICK_REFERENCE.md` - Step-by-step manual workflow checklist
 
-## TensorBoard Changes Summary
+## TensorBoard Changes Summary (src layout)
 
 The patch adds:
-1. Import: `from lerobot.common.utils.tensorboard_utils import TensorBoardLogger`
-2. Logger initialization based on `cfg.tensorboard.enable`
-3. Training metrics logging to TensorBoard
-4. Evaluation metrics logging to TensorBoard  
-5. Proper cleanup of TensorBoard logger
+1. `TensorBoardConfig` to `src/lerobot/configs/default.py` and inclusion in `TrainPipelineConfig` in `src/lerobot/configs/train.py`.
+2. New utility `src/lerobot/utils/tensorboard_utils.py` providing `TensorBoardLogger`.
+3. Wiring in `src/lerobot/scripts/train.py`: initialize when `cfg.tensorboard.enable`, log train/eval metrics and checkpoints, close at end.
 
 ## Usage
 
 To enable TensorBoard in your training:
 
 ```yaml
-# In your training config
+# In your training config (YAML notation for illustration)
 tensorboard:
   enable: true
-  log_dir: null  # Optional: defaults to output_dir/tensorboard
+  log_dir: null       # defaults to outputs/train/.../tensorboard
+  comment: null
+  flush_secs: 120
+  disable_artifact: false
 ```
 
 Then run:

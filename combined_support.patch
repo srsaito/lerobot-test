@@ -46,32 +46,84 @@ index 4e6154c2..9e8da5d7 100644
  
      # Add extra (empty) batch dimension, required to forward the policy
      state = state.unsqueeze(0)
-diff --git a/lerobot/scripts/train.py b/lerobot/scripts/train.py
-index 0de247be..1c4a7164 100644
---- a/lerobot/scripts/train.py
-+++ b/lerobot/scripts/train.py
-@@ -48,6 +48,7 @@ from lerobot.common.utils.utils import (
+diff --git a/examples/2_evaluate_pretrained_policy.py b/examples/2_evaluate_pretrained_policy.py
+index 4e6154c2..9e8da5d7 100644
+--- a/examples/2_evaluate_pretrained_policy.py
++++ b/examples/2_evaluate_pretrained_policy.py
+@@ -36,8 +36,15 @@ from lerobot.common.policies.diffusion.modeling_diffusion import DiffusionPolicy
+ output_directory = Path("outputs/eval/example_pusht_diffusion")
+ output_directory.mkdir(parents=True, exist_ok=True)
+ 
+-# Select your device
+-device = "cuda"
++# Select your device - auto-detect best available device
++if torch.cuda.is_available():
++    device = "cuda"
++elif torch.backends.mps.is_available():
++    device = "mps"
++else:
++    device = "cpu"
++
++print(f"Using device: {device}")
+ 
+ # Provide the [hugging face repo id](https://huggingface.co/lerobot/diffusion_pusht):
+ pretrained_policy_path = "lerobot/diffusion_pusht"
+@@ -67,7 +74,7 @@ print(env.action_space)
+ 
+ # Reset the policy and environments to prepare for rollout
+ policy.reset()
+-numpy_observation, info = env.reset(seed=42)
++numpy_observation, info = env.reset(seed=129)
+ 
+ # Prepare to collect every rewards and all the frames of the episode,
+ # from initial state to final state.
+@@ -90,9 +97,13 @@ while not done:
+     image = image.to(torch.float32) / 255
+     image = image.permute(2, 0, 1)
+ 
+-    # Send data tensors from CPU to GPU
+-    state = state.to(device, non_blocking=True)
+-    image = image.to(device, non_blocking=True)
++    # Send data tensors from CPU to GPU/MPS - use non_blocking only for CUDA
++    if device == "cuda":
++        state = state.to(device, non_blocking=True)
++        image = image.to(device, non_blocking=True)
++    else:
++        state = state.to(device)
++        image = image.to(device)
+ 
+     # Add extra (empty) batch dimension, required to forward the policy
+     state = state.unsqueeze(0)
+
+diff --git a/src/lerobot/scripts/train.py b/src/lerobot/scripts/train.py
+index 0000000..0000001 100644
+--- a/src/lerobot/scripts/train.py
++++ b/src/lerobot/scripts/train.py
+@@ -50,6 +50,7 @@ from lerobot.utils.utils import (
+     has_method,
      init_logging,
  )
- from lerobot.common.utils.wandb_utils import WandBLogger
-+from lerobot.common.utils.tensorboard_utils import TensorBoardLogger
- from lerobot.configs import parser
- from lerobot.configs.train import TrainPipelineConfig
- from lerobot.scripts.eval import eval_policy
-@@ -116,6 +117,12 @@ def train(cfg: TrainPipelineConfig):
+ from lerobot.utils.wandb_utils import WandBLogger
++from lerobot.utils.tensorboard_utils import TensorBoardLogger
+ 
+@@ -112,6 +113,12 @@ def train(cfg: TrainPipelineConfig):
+     if cfg.wandb.enable and cfg.wandb.project:
+         wandb_logger = WandBLogger(cfg)
+     else:
          wandb_logger = None
          logging.info(colored("Logs will be saved locally.", "yellow", attrs=["bold"]))
- 
-+    # TensorBoard logger
++
++    # TensorBoard logger (optional)
 +    if cfg.tensorboard.enable:
 +        tensorboard_logger = TensorBoardLogger(cfg)
 +    else:
 +        tensorboard_logger = None
-+
-     if cfg.seed is not None:
-         set_seed(cfg.seed)
  
-@@ -235,6 +242,11 @@ def train(cfg: TrainPipelineConfig):
+@@ -229,6 +236,12 @@ def train(cfg: TrainPipelineConfig):
+         if is_log_step:
+             logging.info(train_tracker)
+             if wandb_logger:
+                 wandb_log_dict = train_tracker.to_dict()
                  if output_dict:
                      wandb_log_dict.update(output_dict)
                  wandb_logger.log_dict(wandb_log_dict, step)
@@ -82,8 +134,15 @@ index 0de247be..1c4a7164 100644
 +                tensorboard_logger.log_dict(tb_log_dict, step, mode="train")
              train_tracker.reset_averages()
  
-         if cfg.save_checkpoint and is_saving_step:
-@@ -277,9 +289,14 @@ def train(cfg: TrainPipelineConfig):
+@@ -245,6 +258,8 @@ def train(cfg: TrainPipelineConfig):
+             update_last_checkpoint(checkpoint_dir)
+             if wandb_logger:
+                 wandb_logger.log_policy(checkpoint_dir)
++            if tensorboard_logger:
++                tensorboard_logger.log_policy(checkpoint_dir)
+ 
+@@ -274,6 +289,10 @@ def train(cfg: TrainPipelineConfig):
+             if wandb_logger:
                  wandb_log_dict = {**eval_tracker.to_dict(), **eval_info}
                  wandb_logger.log_dict(wandb_log_dict, step, mode="eval")
                  wandb_logger.log_video(eval_info["video_paths"][0], step, mode="eval")
@@ -96,8 +155,49 @@ index 0de247be..1c4a7164 100644
 +    if tensorboard_logger:
 +        tensorboard_logger.close()
      logging.info("End of training")
+
+diff --git a/src/lerobot/configs/default.py b/src/lerobot/configs/default.py
+index 0000000..0000002 100644
+--- a/src/lerobot/configs/default.py
++++ b/src/lerobot/configs/default.py
+@@ -69,3 +69,11 @@ class EvalConfig:
+                 f"or lower the batch size (e.g. `eval.batch_size={self.n_episodes}`)."
+             )
+
++@dataclass
++class TensorBoardConfig:
++    enable: bool = False
++    log_dir: str | None = None  # defaults to output_dir/tensorboard
++    comment: str | None = None
++    flush_secs: int = 120
++    disable_artifact: bool = False
+
+diff --git a/src/lerobot/configs/train.py b/src/lerobot/configs/train.py
+index 0000000..0000003 100644
+--- a/src/lerobot/configs/train.py
++++ b/src/lerobot/configs/train.py
+@@ -24,7 +24,7 @@ from huggingface_hub.errors import HfHubHTTPError
  
- 
+ from lerobot import envs
+ from lerobot.configs import parser
+-from lerobot.configs.default import DatasetConfig, EvalConfig, WandBConfig
++from lerobot.configs.default import DatasetConfig, EvalConfig, WandBConfig, TensorBoardConfig
+ from lerobot.configs.policies import PreTrainedConfig
+ from lerobot.optim import OptimizerConfig
+ from lerobot.optim.schedulers import LRSchedulerConfig
+@@ -63,6 +63,7 @@ class TrainPipelineConfig(HubMixin):
+     scheduler: LRSchedulerConfig | None = None
+     eval: EvalConfig = field(default_factory=EvalConfig)
+     wandb: WandBConfig = field(default_factory=WandBConfig)
++    tensorboard: TensorBoardConfig = field(default_factory=TensorBoardConfig)
+
+diff --git b/src/lerobot/utils/tensorboard_utils.py a/src/lerobot/utils/tensorboard_utils.py
+new file mode 100644
+index 0000000..0000004
+--- /dev/null
++++ b/src/lerobot/utils/tensorboard_utils.py
+@@ -0,0 +1,120 @@
+<same as tensorboard_support.patch>
 diff --git a/pyproject.toml b/pyproject.toml
 index 5bff0fca..72c2943d 100644
 --- a/pyproject.toml
