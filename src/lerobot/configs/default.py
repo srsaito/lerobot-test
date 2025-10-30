@@ -50,6 +50,15 @@ class WandBConfig:
 
 
 @dataclass
+class TensorBoardConfig:
+    enable: bool = False
+    log_dir: str | None = None  # defaults to outputs/train/.../tensorboard
+    comment: str | None = None
+    flush_secs: int = 120
+    disable_artifact: bool = False
+
+
+@dataclass
 class EvalConfig:
     n_episodes: int = 50
     # `batch_size` specifies the number of environments to use in a gym.vector.VectorEnv.

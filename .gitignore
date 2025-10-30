@@ -177,3 +177,6 @@ outputs/
 *.urdf
 *.xml
 *.part
+
+# Reference documentation
+docs/*.pdf

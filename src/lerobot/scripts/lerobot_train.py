@@ -35,6 +35,7 @@ from lerobot.optim.factory import make_optimizer_and_scheduler
 from lerobot.policies.factory import make_policy, make_pre_post_processors
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.rl.wandb_utils import WandBLogger
+from lerobot.utils.tensorboard_utils import TensorBoardLogger
 from lerobot.scripts.lerobot_eval import eval_policy_all
 from lerobot.utils.logging_utils import AverageMeter, MetricsTracker
 from lerobot.utils.random_utils import set_seed
@@ -169,6 +170,12 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
         wandb_logger = None
         if is_main_process:
             logging.info(colored("Logs will be saved locally.", "yellow", attrs=["bold"]))
+
+    # TensorBoard logger (optional)
+    if cfg.tensorboard.enable and is_main_process:
+        tensorboard_logger = TensorBoardLogger(cfg)
+    else:
+        tensorboard_logger = None
 
     if cfg.seed is not None:
         set_seed(cfg.seed, accelerator=accelerator)
@@ -354,6 +361,11 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
                 if output_dict:
                     wandb_log_dict.update(output_dict)
                 wandb_logger.log_dict(wandb_log_dict, step)
+            if tensorboard_logger:
+                tb_log_dict = train_tracker.to_dict()
+                if output_dict:
+                    tb_log_dict.update(output_dict)
+                tensorboard_logger.log_dict(tb_log_dict, step, mode="train")
             train_tracker.reset_averages()
 
         if cfg.save_checkpoint and is_saving_step:
@@ -373,6 +385,8 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
                 update_last_checkpoint(checkpoint_dir)
                 if wandb_logger:
                     wandb_logger.log_policy(checkpoint_dir)
+                if tensorboard_logger:
+                    tensorboard_logger.log_policy(checkpoint_dir)
 
             accelerator.wait_for_everyone()
 
@@ -420,11 +434,16 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
                     wandb_log_dict = {**eval_tracker.to_dict(), **eval_info}
                     wandb_logger.log_dict(wandb_log_dict, step, mode="eval")
                     wandb_logger.log_video(eval_info["overall"]["video_paths"][0], step, mode="eval")
+                if tensorboard_logger:
+                    tb_log_dict = {**eval_tracker.to_dict(), **eval_info}
+                    tensorboard_logger.log_dict(tb_log_dict, step, mode="eval")
 
             accelerator.wait_for_everyone()
 
     if eval_env:
         close_envs(eval_env)
+    if tensorboard_logger:
+        tensorboard_logger.close()
 
     if is_main_process:
         logging.info("End of training")
