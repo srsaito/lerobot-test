@@ -1,6 +1,6 @@
 # LeRobot Fork Enhancement Guide
 
-This fork extends the upstream LeRobot v0.4.0 with additional features including TensorBoard support, Apple MPS (Metal Performance Shaders) compatibility, and visualization enhancements.
+This fork extends the upstream LeRobot v0.4.1+ with TensorBoard support. Apple MPS (Metal Performance Shaders) support is now built into upstream LeRobot v0.4.1+.
 
 ## 🚀 Quick Setup After Cloning
 
@@ -44,14 +44,12 @@ When setting up this fork on a new machine:
 - Automatic cleanup and proper resource management
 - Located in `src/lerobot/utils/tensorboard_utils.py`
 
-### Apple MPS Support
-- Automatic device detection: CUDA → MPS → CPU fallback
+### Apple MPS Support (Built-in as of v0.4.1)
+LeRobot v0.4.1+ includes native MPS support - **no patches needed!**
+- Automatic device detection: CUDA → MPS → Intel XPU → CPU fallback
 - MPS-compatible parameter handling (conditional `non_blocking`)
+- Automatic float64 → float32 conversion for MPS
 - Enhanced device logging for debugging
-
-### Visualization Dependencies
-- matplotlib and seaborn integration for plotting
-- Additional dependencies in `pyproject.toml`
 
 ## 📋 Maintaining Your Fork
 
@@ -77,8 +75,9 @@ Follow this checklist when merging from upstream:
 
 4. **Commit changes**
    ```bash
-   git add src/lerobot/scripts/train.py examples/2_evaluate_pretrained_policy.py pyproject.toml
-   git commit -m "Reapply TensorBoard, visualization, and MPS support after upstream merge"
+   git add src/lerobot/configs/default.py src/lerobot/configs/train.py \
+           src/lerobot/scripts/lerobot_train.py src/lerobot/utils/tensorboard_utils.py
+   git commit -m "Reapply TensorBoard support after upstream merge"
    ```
 
 5. **Push to fork**
@@ -88,10 +87,9 @@ Follow this checklist when merging from upstream:
 
 ### Patch Files
 
-- `combined_support.patch` - Main patch file containing all enhancements
-- `tensorboard_support.patch` - TensorBoard-only patch (if needed separately)
-- `visualization_support.patch` - Visualization dependencies only
+- `tensorboard_v0.4.1.patch` - Clean patch file for LeRobot v0.4.1+
 - `apply_tensorboard_patch.sh` - Automated application script
+- `PATCHES_README.md` - Detailed documentation for the patch system
 
 ## 📊 Using TensorBoard
 
@@ -126,28 +124,25 @@ tensorboard --logdir=outputs/train/
 
 ### Files Modified by Patches
 
+**Configuration Files:**
+- `src/lerobot/configs/default.py` - Adds `TensorBoardConfig` dataclass
+- `src/lerobot/configs/train.py` - Adds `tensorboard` field to `TrainPipelineConfig`
+
 **Training Script (`src/lerobot/scripts/lerobot_train.py`):**
 - TensorBoard logger initialization
 - Training metrics logging
 - Evaluation metrics logging
 - Proper cleanup and resource management
 
-**Evaluation Example (`examples/2_evaluate_pretrained_policy.py`):**
-- MPS device auto-detection
-- MPS-compatible tensor operations
-- Enhanced device logging
-
-**Configuration (`pyproject.toml`):**
-- Visualization dependencies (matplotlib, seaborn)
-
 **New Files Added:**
 - `src/lerobot/utils/tensorboard_utils.py` - TensorBoard logging utilities
 
-### Device Compatibility
-The fork automatically detects and uses the best available device:
+### Device Compatibility (Built-in as of v0.4.1)
+LeRobot v0.4.1+ automatically detects and uses the best available device:
 1. NVIDIA CUDA (if available)
 2. Apple MPS (on Apple Silicon Macs)
-3. CPU (fallback)
+3. Intel XPU (for Intel GPUs)
+4. CPU (fallback)
 
 ## 🚨 Troubleshooting
 
@@ -156,12 +151,13 @@ If `./apply_tensorboard_patch.sh` reports conflicts:
 
 ```bash
 # Try 3-way merge
-git apply --3way combined_support.patch
+git apply --3way tensorboard_v0.4.1.patch
 
 # Check what changed upstream
-git diff upstream/main -- src/lerobot/scripts/train.py
+git diff upstream/main -- src/lerobot/scripts/lerobot_train.py
 
 # Manual resolution may be needed for significant upstream changes
+# See PATCHES_README.md for more troubleshooting tips
 ```
 
 ### MPS Issues
@@ -190,10 +186,12 @@ When using Claude Code's `#` command:
 
 ## 📝 Notes
 
-- This fork tracks upstream `v0.4.0` with the new `src/` layout
-- Patches are designed to be robust against upstream changes
-- Keep patch files updated if you modify the enhanced features
+- This fork tracks upstream `v0.4.1+` with the new `src/` layout
+- **Apple MPS support is built into upstream v0.4.1+** - no patches needed!
+- TensorBoard patches are designed to be robust against upstream changes
+- Keep patch files updated if you modify the TensorBoard features
 - All enhancements are backward-compatible with standard LeRobot usage
+- See `PATCHES_README.md` for detailed patch documentation
 
 ## 📚 Pi0 Flow Matching Code Walkthrough
 
